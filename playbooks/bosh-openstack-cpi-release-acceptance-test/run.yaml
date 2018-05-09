@@ -1,0 +1,52 @@
+- hosts: all
+  become: yes
+  roles:
+    - clone-devstack-gate-to-workspace
+    - create-devstack-local-conf
+    - install-devstack
+    # - install-ruby
+  tasks:
+    - name: Run acceptance tests with bosh-openstack-cpi-release
+      shell:
+        cmd: |
+          set -e
+          set -o pipefail
+          set -x
+
+          # export environment variables
+
+
+          # prepare the folders for validate.sh
+          project_src_dir=${PWD##*/}
+          cd ..
+          mv $project_src_dir openstack-cpi-src
+
+          mkdir -p bosh-cli
+          pushd bosh-cli
+          curl -O https://s3.amazonaws.com/bosh-cli-artifacts/bosh-cli-3.0.1-linux-amd64
+          popd
+
+          git clone https://github.com/cloudfoundry-incubator/cf-openstack-validator.git validator-src
+
+          # create OpenStack resources necessary to run the validator
+          pushd validator-src/ci/terraform
+          cp terraform.tfvars.template terraform.tfvars
+          sed -i -e 's/<openstack_identity_v3_url>/${AUTH_URL}/' terraform.tfvars
+          sed -i -e 's/<openstack_user>/${USERNAME}/' terraform.tfvars
+          sed -i -e 's/<openstack_password>/${API_KEY}/' terraform.tfvars
+          sed -i -e 's/<openstack_domain>/${DOMAIN}/' terraform.tfvars
+          sed -i -e 's/<openstack_project_name>/${PROJECT}/' terraform.tfvars
+          sed -i -e 's/<external_network_name>/XYZ/' terraform.tfvars
+          sed -i -e 's/<external_network_id>/XYZ/' terraform.tfvars
+          sed -i -e 's/<region_name>/XYZ/' terraform.tfvars
+          sed -i -e 's/<availability_zone>/${AVAILABILITY_ZONE}/' terraform.tfvars
+          sed -i -e 's/<public_key>/XYZ/' terraform.tfvars
+          terraform apply -auto-approve
+          popd
+
+          # run the validate task
+          validator-src/ci/cpi-openstack-compatibility/tasks/validate.sh
+
+        executable: /bin/bash
+        chdir: '{{ zuul.project.src_dir }}'
+      environment: '{{ ruby_env }}'
